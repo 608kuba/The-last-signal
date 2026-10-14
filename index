@@ -1,0 +1,862 @@
+<!doctype html>
+<html lang="cs">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>The Last Signal - Extended v3</title>
+<style>
+  :root{
+    --panel:rgba(7,12,18,.84);--text:#eaf2fb;--muted:#9aaabd;
+    --accent:#d7eaff;--good:#a9efbb;--warn:#ffe39a;
+    --hud-gap:14px
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;overflow:hidden;background:#05080c;color:var(--text);font-family:Inter,system-ui,Segoe UI,Arial,sans-serif}
+  #game{display:block;width:100vw;height:100vh;background:#0b1114}
+
+  #hud{position:fixed;inset:0;pointer-events:none;z-index:20}
+  .panel{
+    background:var(--panel);border:1px solid rgba(255,255,255,.10);
+    backdrop-filter:blur(7px);box-shadow:0 8px 28px rgba(0,0,0,.28),inset 0 1px rgba(255,255,255,.025)
+  }
+  #topLeft{position:absolute;left:var(--hud-gap);top:var(--hud-gap);padding:11px 13px;border-radius:12px;min-width:270px;max-width:min(440px,45vw)}
+  #topRight{position:absolute;right:var(--hud-gap);top:var(--hud-gap);padding:11px 13px;border-radius:12px;min-width:190px;text-align:right}
+  #questBox{position:absolute;left:var(--hud-gap);bottom:var(--hud-gap);padding:11px 13px;border-radius:12px;width:min(390px,32vw);min-height:64px}
+  #miniMap{position:absolute;right:var(--hud-gap);bottom:var(--hud-gap);width:200px;height:142px;border-radius:12px;overflow:hidden;padding:3px}
+  #miniCanvas{width:100%;height:100%;display:block;border-radius:9px;background:#0a0d10}
+  #prompt{
+    position:absolute;left:50%;bottom:22px;transform:translateX(-50%);
+    padding:9px 14px;border-radius:10px;font-weight:750;display:none;
+    max-width:min(420px,34vw);text-align:center;white-space:normal
+  }
+  #toast{
+    position:absolute;left:50%;top:18px;transform:translateX(-50%);
+    padding:9px 14px;border-radius:10px;opacity:0;transition:opacity .15s;
+    max-width:38vw;text-align:center
+  }
+  .small{font-size:12px;color:var(--muted);line-height:1.35}
+  .bar{height:8px;background:#25313e;border-radius:999px;overflow:hidden;margin-top:5px}
+  .bar>div{height:100%;background:linear-gradient(90deg,#9bc7ef,#e6f4ff);transition:width .15s}
+
+  #dialog,#inventory,#help,#endScreen{
+    position:fixed;inset:0;background:rgba(0,0,0,.62);display:none;align-items:center;justify-content:center;
+    padding:18px;z-index:60
+  }
+  #endScreen{z-index:80}
+  .modal{
+    width:min(720px,94vw);max-height:82vh;overflow:auto;background:#111922;
+    border:1px solid rgba(255,255,255,.11);border-radius:15px;padding:18px;
+    box-shadow:0 22px 70px rgba(0,0,0,.58)
+  }
+  .modal h2,.modal h3{margin-top:0}
+  #dialogText{white-space:pre-line;line-height:1.55}
+  .choices{display:grid;gap:8px;margin-top:14px}
+  button{font:inherit;color:#eef6ff;background:#1a2634;border:1px solid #34495f;border-radius:10px;padding:10px 12px;cursor:pointer;text-align:left}
+  button:hover{background:#24364a;border-color:#49647e}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:9px}
+  .item{padding:10px;border-radius:9px;background:#17212c;border:1px solid #293948}
+  kbd{background:#1a2634;border:1px solid #415467;border-bottom-width:2px;border-radius:5px;padding:1px 6px}
+  .sep{height:1px;background:rgba(255,255,255,.08);margin:12px 0}
+
+  @media (max-width:1050px){
+    #questBox{width:300px;bottom:170px}
+    #miniMap{width:170px;height:121px}
+    #prompt{max-width:340px}
+  }
+  @media (max-width:760px){
+    :root{--hud-gap:8px}
+    #topLeft{left:8px;right:8px;max-width:none;min-width:0}
+    #topRight{top:94px;right:8px;min-width:150px}
+    #toast{top:146px;max-width:calc(100vw - 20px)}
+    #miniMap{display:none}
+    #questBox{left:8px;right:8px;bottom:68px;width:auto;min-height:0}
+    #prompt{bottom:10px;max-width:calc(100vw - 16px);width:max-content}
+  }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="hud">
+  <div id="topLeft" class="panel">
+    <b>THE LAST SIGNAL</b><div class="small">E interakce • F svítilna • R baterie • I inventář • J úkoly • H nápověda</div>
+    <div style="margin-top:8px">Baterie: <span id="batteryText">0%</span></div>
+    <div class="bar"><div id="batteryBar" style="width:0%"></div></div>
+  </div>
+  <div id="topRight" class="panel"><div id="timeText">21:00</div><div class="small" id="zoneText">Okraj lesa</div></div>
+  <div id="questBox" class="panel"><b>Aktuální úkol</b><div id="questText" style="margin-top:5px">Najdi cestu do vesnice.</div></div>
+  <div id="prompt" class="panel"></div>
+  <div id="toast" class="panel"></div>
+  <div id="miniMap" class="panel"><canvas id="miniCanvas" width="380" height="270"></canvas></div>
+</div>
+
+<div id="dialog"><div class="modal"><h3 id="dialogTitle"></h3><div id="dialogText"></div><div id="dialogChoices" class="choices"></div></div></div>
+<div id="inventory"><div class="modal"><h2>Inventář</h2><div id="inventoryGrid" class="grid"></div><div class="sep"></div><button id="closeInventory">Zavřít</button></div></div>
+<div id="help"><div class="modal"><h2>Ovládání</h2><p><kbd>WASD</kbd> / šipky: pohyb • <kbd>E</kbd>: interakce • <kbd>F</kbd>: svítilna • <kbd>R</kbd>: použít baterii • <kbd>I</kbd>: inventář • <kbd>J</kbd>: přehled úkolů • <kbd>H</kbd>: nápověda • <kbd>Esc</kbd>: zavřít okno</p><p class="small">Hru můžeš uložit u rádia v chatě. Některé dialogy a úkoly mění konec hry.</p><button id="closeHelp">Zavřít</button></div></div>
+<div id="endScreen"><div class="modal"><h2 id="endTitle"></h2><div id="endText" style="white-space:pre-line;line-height:1.5"></div><div class="choices"><button onclick="location.reload()">Hrát znovu</button></div></div></div>
+
+<script>
+(() => {
+'use strict';
+
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const mini = document.getElementById('miniCanvas');
+const mctx = mini.getContext('2d');
+const darknessCanvas = document.createElement('canvas');
+const dctx = darknessCanvas.getContext('2d');
+
+function resize(){
+  canvas.width=innerWidth;canvas.height=innerHeight;
+  darknessCanvas.width=canvas.width;darknessCanvas.height=canvas.height;
+}
+addEventListener('resize',resize);resize();
+
+const TILE=32, MAP_W=160, MAP_H=112;
+const T={GRASS:0,FOREST:1,ROAD:2,DIRT:3,WATER:4,DARK:5,STONE:6};
+const map=Array.from({length:MAP_H},()=>Array(MAP_W).fill(T.GRASS));
+const roadMask=Array.from({length:MAP_H},()=>Array(MAP_W).fill(false));
+const rng = mulberry32(184731);
+
+function mulberry32(a){return function(){let t=a+=0x6D2B79F5;t=Math.imul(t^t>>>15,t|1);t^=t+Math.imul(t^t>>>7,t|61);return((t^t>>>14)>>>0)/4294967296}}
+function clamp(v,a,b){return Math.max(a,Math.min(b,v))}
+function dist(ax,ay,bx,by){return Math.hypot(ax-bx,ay-by)}
+
+function paintCircle(cx,cy,r,type,mask=false){
+  for(let y=Math.floor(cy-r);y<=Math.ceil(cy+r);y++) for(let x=Math.floor(cx-r);x<=Math.ceil(cx+r);x++){
+    if(x<0||y<0||x>=MAP_W||y>=MAP_H) continue;
+    if(dist(x,y,cx,cy)<=r){map[y][x]=type;if(mask)roadMask[y][x]=true;}
+  }
+}
+function paintPath(points,width=2,type=T.ROAD){
+  for(let i=0;i<points.length-1;i++){
+    const [x1,y1]=points[i],[x2,y2]=points[i+1];
+    const steps=Math.ceil(dist(x1,y1,x2,y2)*3);
+    for(let s=0;s<=steps;s++){
+      const t=s/steps;paintCircle(x1+(x2-x1)*t,y1+(y2-y1)*t,width,type,true);
+    }
+  }
+}
+
+// Základ lesa
+for(let y=0;y<MAP_H;y++) for(let x=0;x<MAP_W;x++){
+  if(rng()<0.62) map[y][x]=T.FOREST;
+  if(rng()<0.035) map[y][x]=T.DARK;
+}
+
+// Hlavní oblasti
+paintCircle(25,28,12,T.GRASS);      // vesnice
+paintCircle(65,39,8,T.GRASS);       // chata
+paintCircle(110,25,9,T.GRASS);      // vysílač
+paintCircle(130,82,10,T.STONE);     // lom / jeskyně
+paintCircle(47,87,10,T.GRASS);      // nádraží
+for(let y=68;y<93;y++) for(let x=82;x<105;x++) if(((x-93)/13)**2+((y-80)/10)**2<1) map[y][x]=T.WATER;
+
+// Silnice a lesní cesty. Stromy se na roadMask už nikdy nekreslí.
+paintPath([[5,55],[18,45],[25,28],[48,31],[65,39],[82,36],[110,25]],2.2,T.ROAD);
+paintPath([[25,28],[31,48],[29,67],[47,87]],1.8,T.DIRT);
+paintPath([[65,39],[72,56],[81,69],[93,72]],1.4,T.DIRT);
+paintPath([[93,72],[110,70],[130,82]],1.4,T.DIRT);
+paintPath([[47,87],[71,94],[103,96],[130,82]],1.2,T.DIRT);
+paintPath([[110,25],[125,40],[137,53]],1.1,T.DIRT);
+
+// Startovní mýtina
+paintCircle(7,55,5,T.GRASS);
+
+const structures=[
+ {x:21,y:23,w:6,h:5,type:'house',label:'Dům správce'},
+ {x:30,y:31,w:5,h:4,type:'house',label:'Dům Ley'},
+ {x:61,y:35,w:8,h:6,type:'cabin',label:'Lesní chata'},
+ {x:106,y:20,w:7,h:8,type:'tower',label:'Reléová stanice'},
+ {x:43,y:83,w:10,h:5,type:'station',label:'Opuštěná zastávka'}
+];
+
+const trees=[];
+for(let y=1;y<MAP_H-1;y++) for(let x=1;x<MAP_W-1;x++){
+  if(map[y][x]!==T.FOREST) continue;
+  let nearRoad=false;
+  for(let oy=-1;oy<=1;oy++) for(let ox=-1;ox<=1;ox++) if(roadMask[y+oy]?.[x+ox]) nearRoad=true;
+  const nearStructure=structures.some(s=>x>=s.x-2&&x<=s.x+s.w+1&&y>=s.y-2&&y<=s.y+s.h+1);
+  if(!nearRoad && !nearStructure && rng()<0.44) trees.push({x:x+rng()*.6-.3,y:y+rng()*.6-.3,s:0.8+rng()*.5});
+}
+
+const state={
+  time:21*60,
+  flashlight:false,
+  battery:0,
+  hasFlashlight:false,
+  inventory:{},
+  flags:{intro:false,talkedMarek:false,talkedLea:false,leaBatteryGiven:false,foundNote:false,foundKey:false,powered:false,heardTape:false,foundFuse:false,towerOpen:false,signalSent:false,dogHelp:false,stationCode:false,caveTruth:false,stationBoxTaken:false,dataModuleTaken:false},
+  questStage:0,
+  journal:[],
+  choiceTrust:0,
+  ending:null
+};
+
+const player={x:7*TILE,y:55*TILE,r:10,speed:185,facingX:1,facingY:0};
+let keys={},dialogOpen=false,overlayOpen=false,last=performance.now(),nearest=null,dialogSerial=0;
+
+const particles=[];
+for(let i=0;i<120;i++){
+  const r=rng();
+  particles.push({
+    x:rng()*MAP_W*TILE,
+    y:rng()*MAP_H*TILE,
+    vx:(rng()-.5)*6,
+    vy:(rng()-.5)*6-2,
+    size:rng()*2+1,
+    phase:rng()*Math.PI*2,
+    type:r<.35?'firefly':(r<.75?'dust':'leaf')
+  });
+}
+
+const quests=[
+ 'Najdi cestu do vesnice.',
+ 'Promluv se správcem Markem.',
+ 'Najdi lesní chatu a zjisti, proč vysílač mlčí.',
+ 'Najdi baterku a náhradní pojistku.',
+ 'Zprovozni generátor u chaty.',
+ 'Zjisti kód k reléové stanici.',
+ 'Dostaň se k reléové stanici.',
+ 'Rozhodni, jaký signál odešleš.'
+];
+
+function addItem(name,count=1){state.inventory[name]=(state.inventory[name]||0)+count;toast(`Získáno: ${name}${count>1?' ×'+count:''}`)}
+function hasItem(name,count=1){return (state.inventory[name]||0)>=count}
+function removeItem(name,count=1){if(!hasItem(name,count))return false;state.inventory[name]-=count;if(state.inventory[name]<=0)delete state.inventory[name];return true}
+function addJournal(text){if(!state.journal.includes(text))state.journal.push(text)}
+function setQuest(n){state.questStage=Math.max(state.questStage,n);document.getElementById('questText').textContent=quests[state.questStage]||'Příběh dokončen.'}
+function toast(text){const e=document.getElementById('toast');e.textContent=text;e.style.opacity='1';clearTimeout(toast.t);toast.t=setTimeout(()=>e.style.opacity='0',1800)}
+function refreshOverlayState(){
+  const ids=['dialog','inventory','help','endScreen'];
+  overlayOpen=ids.some(id=>document.getElementById(id).style.display==='flex');
+}
+function addBatteryCell(count=1){addItem('Bateriový článek',count)}
+function useBatteryCell(){
+  if(!state.hasFlashlight)return toast('Nejdřív musíš najít svítilnu.');
+  if(!hasItem('Bateriový článek'))return toast('Nemáš žádný náhradní bateriový článek.');
+  if(state.battery>=98)return toast('Svítilna už je skoro plně nabitá.');
+  removeItem('Bateriový článek');
+  state.battery=Math.min(100,state.battery+45);
+  toast('Vyměnil jsi baterii ve svítilně.');
+}
+function updateQuestProgress(){
+  const tx=player.x/TILE,ty=player.y/TILE;
+  if(state.flags.talkedMarek && state.questStage<2)setQuest(2);
+  if(state.questStage===2 && dist(tx,ty,65,39)<10)setQuest(3);
+  if(state.hasFlashlight && state.flags.foundFuse && state.questStage<4)setQuest(4);
+  if(state.flags.powered && state.questStage<5)setQuest(5);
+  if(state.flags.stationCode && state.questStage<6)setQuest(6);
+  if(state.flags.towerOpen && state.questStage<7)setQuest(7);
+}
+
+const interactables=[];
+function addInteractable(o){o.active=o.active!==false;o.radius=o.radius||58;interactables.push(o);return o}
+function worldPos(tx,ty){return {x:tx*TILE+TILE/2,y:ty*TILE+TILE/2}}
+function npc(id,name,tx,ty,talk){const p=worldPos(tx,ty);return addInteractable({id,type:'npc',name,x:p.x,y:p.y,prompt:`E • Promluvit s ${name}`,talk,draw:true})}
+function object(id,name,tx,ty,prompt,action,drawType='object'){const p=worldPos(tx,ty);return addInteractable({id,type:drawType,name,x:p.x,y:p.y,prompt,action,draw:true})}
+function item(id,name,tx,ty,action){const p=worldPos(tx,ty);return addInteractable({id,type:'item',name,x:p.x,y:p.y,prompt:`E • Sebrat ${name}`,action,draw:true})}
+
+npc('marek','Markem',24,29,()=>{
+  state.flags.talkedMarek=true;setQuest(2);
+  openDialog('Marek','„Vysílač zhasl před třemi nocemi. Od té doby se v lese objevují světla, která tam nemají být.\n\nJestli chceš zjistit, co se stalo, najdi chatu starého technika. Měla by být východně po silnici.“',[
+    {text:'„Co je na vysílači tak důležité?“',action:()=>openDialog('Marek','„Dřív jen přeposílal nouzové zprávy. Teď ale každou noc vysílá něco vlastního. Nikdo neví odkud se to bere.“',[{text:'Rozumím.'}])},
+    {text:'„Půjdu tam.“',action:()=>{state.choiceTrust++;toast('Marek si zapamatoval tvé rozhodnutí.')}}
+  ]);
+});
+
+npc('lea','Leou',32,36,()=>{
+  state.flags.talkedLea=true;
+  openDialog('Lea','„Jestli jdeš k vysílači, neber všechno, co uslyšíš, jako pravdu. Ta věc umí zopakovat hlas člověka přesně tak, jak ho znáš.“',[
+    {text:'„Ty jsi to slyšela?“',action:()=>openDialog('Lea','„Ano. Hlas mého bratra. Jenže ten je už roky pryč. Proto jsem tam přestala chodit.“',[{text:'Tohle se mi nelíbí.'}])},
+    {text:'„Máš něco, co by mi pomohlo?“',action:()=>{if(!state.flags.leaBatteryGiven){state.flags.leaBatteryGiven=true;addBatteryCell();toast('Lea ti dala náhradní bateriový článek.')}else toast('Lea už ti jednu baterii dala.')}}
+  ]);
+});
+
+npc('jan','Janem',48,88,()=>{
+  openDialog('Jan, bývalý výpravčí','„Ta stanice už dávno nefunguje. Ale pod nástupištěm zůstala servisní skříňka. Technik si tam schovával čísla k relé.“',[
+    {text:'„Jak se do ní dostanu?“',action:()=>openDialog('Jan','„Je zamčená starým trojhranem. Klíč prý skončil u chaty, někde poblíž dřevníku.“',[{text:'Díky.'}])},
+    {text:'„Proč jste tu ještě vy?“',action:()=>openDialog('Jan','„Někdo musí vědět, co tu bývalo. Jinak si les vymyslí vlastní verzi.“',[{text:'...'}])}
+  ]);
+});
+
+npc('iva','Ivou',117,68,()=>{
+  openDialog('Iva','„V jeskyni pod lomem jsem našla kabel, který vede směrem k vysílači. Není na žádné staré mapě.“',[
+    {text:'„Ukážeš mi vstup?“',action:()=>{state.flags.dogHelp=true;toast('Na mapě se objevil lom.')}},
+    {text:'„Zůstanu u vysílače.“',action:()=>{state.choiceTrust--;toast('Iva ti přestala úplně věřit.')}}
+  ]);
+});
+
+item('flashlight','baterku',67,42,()=>{
+  state.hasFlashlight=true;state.battery=Math.max(state.battery,38);addItem('Svítilna');
+  interactables.find(x=>x.id==='flashlight').active=false;updateQuestProgress();
+});
+item('battery1','bateriový článek',37,55,()=>{addBatteryCell();interactables.find(x=>x.id==='battery1').active=false});
+item('battery2','bateriový článek',102,91,()=>{addBatteryCell();interactables.find(x=>x.id==='battery2').active=false});
+item('fuse','náhradní pojistku',53,90,()=>{state.flags.foundFuse=true;addItem('Pojistka');interactables.find(x=>x.id==='fuse').active=false;updateQuestProgress()});
+item('key','starý servisní klíč',70,35,()=>{state.flags.foundKey=true;addItem('Servisní klíč');interactables.find(x=>x.id==='key').active=false});
+item('tape','kazetu',63,42,()=>{addItem('Kazeta 04');interactables.find(x=>x.id==='tape').active=false});
+item('note','poznámku',11,52,()=>{
+  state.flags.foundNote=true;addJournal('Poznámka z lesa: „Pokud se světlo rozsvítí samo, neodpovídej na hlas z rádia.“');
+  openDialog('Pomačkaná poznámka','„Pokud se světlo rozsvítí samo, neodpovídej na hlas z rádia.“',[{text:'Vzít poznámku',action:()=>{addItem('Pomačkaná poznámka');interactables.find(x=>x.id==='note').active=false}},{text:'Nechat ji ležet'}]);
+});
+
+object('generator','generátor',59,41,'E • Prohlédnout generátor',()=>{
+  if(state.flags.powered)return openDialog('Generátor','Motor běží nepravidelně, ale drží. Pro tuto noc to musí stačit.',[{text:'Zavřít'}]);
+  if(!hasItem('Pojistka'))return openDialog('Generátor','Chybí hlavní pojistka. Bez ní ho nespustíš.',[{text:'Zavřít'}]);
+  openDialog('Generátor','Do držáku přesně pasuje náhradní pojistka.',[
+    {text:'Vložit pojistku a nastartovat',action:()=>{removeItem('Pojistka');state.flags.powered=true;updateQuestProgress();toast('Generátor běží. Rádio u chaty se probudilo.')}},
+    {text:'Ještě ne'}
+  ]);
+},'machine');
+
+object('radio','rádio',65,42,'E • Použít rádio',()=>{
+  if(!state.flags.powered)return openDialog('Rádio','Bez proudu jen praská reproduktor.',[{text:'Zavřít'}]);
+  const opts=[
+    {text:'Poslechnout šum',action:()=>openDialog('Rádio','Ve šumu se opakuje krátká sekvence: 1… 9… 4… 7… a potom hlas, který vysloví tvoje jméno.',[{text:'Zapsat sekvenci',action:()=>{state.flags.stationCode=true;addJournal('Kód reléové stanice: 1947.');setQuest(6)}}])},
+    {text:'Uložit hru',action:()=>saveGame()}
+  ];
+  if(hasItem('Kazeta 04')&&!state.flags.heardTape)opts.unshift({text:'Přehrát kazetu 04',action:()=>{state.flags.heardTape=true;addJournal('Nahrávka technika: relé nereaguje na běžné nouzové vypnutí. Zdroj je pravděpodobně pod zemí.');openDialog('Kazeta 04','„…jestli to někdo poslouchá, relé už neposílá naše zprávy. Bere si hlasy z pásma a skládá z nich vlastní. Hlavní kabel vede pod lomem…“',[{text:'Zapsat poznámku'}])}});
+  openDialog('Staré rádio','Kontrolka svítí. Reproduktor tiše praská.',opts);
+},'machine');
+
+object('stationBox','servisní skříňku',47,88,'E • Otevřít servisní skříňku',()=>{
+  if(!hasItem('Servisní klíč'))return openDialog('Servisní skříňka','Zámek má nezvyklý trojhranný profil. Běžný klíč sem nepůjde.',[{text:'Zavřít'}]);
+  state.flags.stationCode=true;addJournal('Uvnitř skříňky je štítek: NOUZOVÝ KÓD 1947.');updateQuestProgress();
+  if(state.flags.stationBoxTaken)return openDialog('Servisní skříňka','Uvnitř už nic dalšího není. Na vnitřní straně dvířek zůstává štítek s kódem 1947.',[{text:'Zavřít'}]);
+  openDialog('Servisní skříňka','Uvnitř leží starý servisní protokol. Na první straně je tužkou dopsáno: „NOUZOVÝ KÓD 1947“.',[{text:'Vzít protokol',action:()=>{state.flags.stationBoxTaken=true;addItem('Servisní protokol')}}]);
+},'box');
+
+const towerDoor=object('towerDoor','dveře reléové stanice',109,28,'E • Použít dveře',()=>{
+  if(!state.flags.stationCode)return openDialog('Reléová stanice','Klávesnice čeká na čtyřmístný kód.',[{text:'Zavřít'}]);
+  state.flags.towerOpen=true;updateQuestProgress();
+  openDialog('Reléová stanice','Zadáš 1947. Zámek cvakne. Uvnitř se rozsvítí nouzové osvětlení a obrazovka vypíše: „SIGNAL ROUTING MANUAL OVERRIDE“.',[
+    {text:'Vstoupit',action:()=>{towerDoor.active=false;towerConsole.active=true;toast('Vstoupil jsi do řídicí části stanice.')}},
+    {text:'Ještě ne'}
+  ]);
+},'door');
+
+const towerConsole=object('towerConsole','řídicí konzoli',109,28,'E • Použít konzoli',()=>{
+  if(!state.flags.towerOpen)return;
+  openDialog('Řídicí konzole','Na obrazovce běží tři možné akce. Každá z nich ukončí vysílání jinak.',[
+    {text:'Odeslat nouzovou zprávu ven z údolí',action:()=>finishGame('signal')},
+    {text:'Odpojit relé od hlavního kabelu',action:()=>finishGame('cut')},
+    {text:'Přesměrovat signál zpět ke zdroji v lomu',action:()=>finishGame('return')},
+    {text:'Odejít od konzole'}
+  ]);
+},'console');
+towerConsole.active=false;
+
+object('cave','vstup do jeskyně',131,84,'E • Prozkoumat jeskyni',()=>{
+  if(!state.hasFlashlight)return openDialog('Jeskyně','Uvnitř je úplná tma. Bez baterky bys tam neviděl ani vlastní boty, což je dost mizerný plán na průzkum.',[{text:'Zavřít'}]);
+  state.flags.caveTruth=true;addJournal('Pod lomem je zařízení napojené přímo na kabel relé. Není součástí původní stanice.');
+  openDialog('Podzemní komora','Za krátkou chodbou najdeš betonovou místnost. Z kabelů vede napájení do zařízení bez označení. Na panelu svítí jediná věta: „VOICE MODEL ACTIVE“.',[
+    {text:'Odpojit pomocný modul',action:()=>{if(!state.flags.dataModuleTaken){state.flags.dataModuleTaken=true;state.choiceTrust++;addItem('Datový modul');toast('Zařízení ztichlo, ale relé stále vysílá.')}else toast('Modul už jsi odpojil.')}},
+    {text:'Nechat zařízení být'}
+  ]);
+},'cave');
+
+object('dog','psa u cesty',77,61,'E • Přiblížit se ke psovi',()=>{
+  openDialog('Ztracený pes','Pes má na obojku štítek se jménem „Brix“. Zírá směrem k lomu a odmítá jít dál.',[
+    {text:'Pomalu se k němu přiblížit',action:()=>{state.flags.dogHelp=true;addJournal('Brix tě dovedl k vedlejší cestě směrem k lomu.');toast('Brix ti ukázal zkratku.')}},
+    {text:'Nechat ho být'}
+  ]);
+},'dog');
+
+function saveGame(){
+  const data={state,player:{x:player.x,y:player.y,facingX:player.facingX,facingY:player.facingY},active:Object.fromEntries(interactables.map(o=>[o.id,o.active]))};
+  localStorage.setItem('lastSignalSaveV3',JSON.stringify(data));toast('Hra uložena.');
+}
+function loadGame(){
+  try{
+    const raw=localStorage.getItem('lastSignalSaveV3')||localStorage.getItem('lastSignalSaveV2');if(!raw)return;
+    const d=JSON.parse(raw);const oldFlags={...state.flags};Object.assign(state,d.state);state.flags={...oldFlags,...(d.state.flags||{})};player.x=d.player.x;player.y=d.player.y;player.facingX=d.player.facingX??1;player.facingY=d.player.facingY??0;
+    for(const o of interactables) if(d.active&&o.id in d.active)o.active=d.active[o.id];
+    toast('Načtena uložená hra.');
+  }catch(e){console.warn(e)}
+}
+
+function finishGame(kind){
+  state.signalSent=true;state.ending=kind;
+  const endings={
+    signal:['SIGNÁL ODESLÁN','Nouzová zpráva opustí údolí. O několik sekund později relé zhasne. Ve vesnici se poprvé po třech nocích rozhostí úplné ticho.\n\nRáno přijedou lidé zvenčí. Nikdo ale nedokáže vysvětlit, proč byla poslední věta tvé zprávy odvysílána dvakrát, podruhé hlasem, který nebyl tvůj.'],
+    cut:['TICHO','Přerušíš hlavní spoj mezi relé a podzemním kabelem. Všechny obrazovky zhasnou. Žádná zpráva se nedostane ven, ale hlasy také umlknou.\n\nVesnice zůstane odříznutá ještě několik dní. Někteří ti poděkují. Jiní budou tvrdit, že jsi zničil jedinou šanci zjistit, co zařízení opravdu bylo.'],
+    return:['OZVĚNA','Přesměruješ vysílání zpět do podzemního zařízení. Na několik sekund se celé údolí rozzáří bledým světlem. Pak přijde ticho.\n\nKdyž se vrátíš do lomu, zařízení je vypnuté. Na panelu ale přibyl nový řádek: „MODEL COMPLETE“. Nikdo už žádné hlasy neslyší. A možná je to právě to nejhorší.']
+  };
+  const [t,txt]=endings[kind];document.getElementById('endTitle').textContent=t;document.getElementById('endText').textContent=txt;document.getElementById('endScreen').style.display='flex';overlayOpen=true;
+}
+
+function openDialog(title,text,choices=[{text:'Zavřít'}]){
+  const serial=++dialogSerial;
+  dialogOpen=true;overlayOpen=true;
+  const root=document.getElementById('dialog');root.style.display='flex';
+  document.getElementById('dialogTitle').textContent=title;document.getElementById('dialogText').textContent=text;
+  const box=document.getElementById('dialogChoices');box.innerHTML='';
+  for(const ch of choices){
+    const b=document.createElement('button');b.textContent=ch.text;b.onclick=()=>{
+      const before=dialogSerial;
+      if(ch.action)ch.action();
+      if(ch.next)ch.next();
+      // Zavři jen tehdy, pokud akce neotevřela nový dialog.
+      if(dialogSerial===before)closeDialog(serial);
+    };box.appendChild(b);
+  }
+}
+function closeDialog(serial=null){
+  if(serial!==null && serial!==dialogSerial)return;
+  document.getElementById('dialog').style.display='none';dialogOpen=false;refreshOverlayState();
+}
+
+function openInventory(){
+  overlayOpen=true;document.getElementById('inventory').style.display='flex';
+  const g=document.getElementById('inventoryGrid');g.innerHTML='';
+  const entries=Object.entries(state.inventory);
+  if(!entries.length)g.innerHTML='<div class="small">Inventář je prázdný.</div>';
+  for(const [name,count] of entries){const d=document.createElement('div');d.className='item';d.innerHTML=`<b>${name}</b>${count>1?`<div class="small">Počet: ${count}</div>`:''}`;g.appendChild(d)}
+}
+function closeInventory(){document.getElementById('inventory').style.display='none';refreshOverlayState()}
+function openHelp(){overlayOpen=true;document.getElementById('help').style.display='flex'}
+function closeHelp(){document.getElementById('help').style.display='none';refreshOverlayState()}
+function openJournal(){openDialog('Úkoly a poznámky',quests.map((q,i)=>`${i===state.questStage?'▶':i<state.questStage?'✓':'•'} ${q}`).join('\n')+'\n\nPOZNÁMKY:\n'+(state.journal.length?state.journal.map(x=>'• '+x).join('\n'):'Žádné poznámky.'),[{text:'Zavřít'}])}
+
+document.getElementById('closeInventory').onclick=closeInventory;
+document.getElementById('closeHelp').onclick=closeHelp;
+
+addEventListener('keydown',e=>{
+  keys[e.key.toLowerCase()]=true;
+  if(e.repeat)return;
+  const k=e.key.toLowerCase();
+  if(k==='escape'){if(dialogOpen)closeDialog();else if(document.getElementById('inventory').style.display==='flex')closeInventory();else if(document.getElementById('help').style.display==='flex')closeHelp();return}
+  if(overlayOpen)return;
+  if(k==='e'&&nearest)interact(nearest);
+  if(k==='f')toggleFlashlight();
+  if(k==='r')useBatteryCell();
+  if(k==='i')openInventory();
+  if(k==='h')openHelp();
+  if(k==='j')openJournal();
+});
+addEventListener('keyup',e=>keys[e.key.toLowerCase()]=false);
+
+function toggleFlashlight(){
+  if(!state.hasFlashlight)return toast('Nejdřív musíš baterku najít.');
+  if(state.battery<=0)return toast('Baterka je vybitá.');
+  state.flashlight=!state.flashlight;toast(state.flashlight?'Baterka zapnuta.':'Baterka vypnuta.');
+}
+function interact(o){
+  if(!o||!o.active)return;
+  if(o.talk)o.talk(); else if(o.action)o.action();
+}
+
+function blocked(nx,ny){
+  const tx=Math.floor(nx/TILE),ty=Math.floor(ny/TILE);
+  if(tx<0||ty<0||tx>=MAP_W||ty>=MAP_H)return true;
+  if(map[ty][tx]===T.WATER)return true;
+  for(const s of structures){
+    const left=s.x*TILE,top=s.y*TILE,right=(s.x+s.w)*TILE,bottom=(s.y+s.h)*TILE;
+    // malé dveřní mezery u chaty a věže
+    const doorGap=(s.type==='cabin'&&tx===65&&ty===40)||(s.type==='tower'&&tx===109&&ty===27)||(s.type==='station'&&tx===47&&ty===87);
+    if(nx>left+6&&nx<right-6&&ny>top+6&&ny<bottom-6&&!doorGap)return true;
+  }
+  return false;
+}
+
+function update(dt){
+  if(!overlayOpen){
+    let dx=(keys['d']||keys['arrowright']?1:0)-(keys['a']||keys['arrowleft']?1:0);
+    let dy=(keys['s']||keys['arrowdown']?1:0)-(keys['w']||keys['arrowup']?1:0);
+    if(dx||dy){const l=Math.hypot(dx,dy);dx/=l;dy/=l;player.facingX=dx;player.facingY=dy;const sp=player.speed*dt;
+      const nx=player.x+dx*sp;if(!blocked(nx,player.y))player.x=nx;
+      const ny=player.y+dy*sp;if(!blocked(player.x,ny))player.y=ny;
+    }
+    state.time=(state.time+dt*2.1)%(24*60);
+    if(state.flashlight){state.battery=Math.max(0,state.battery-dt*0.52);if(state.battery<=0){state.flashlight=false;toast('Baterka se vybila.')}}
+  }
+
+  for(const p of particles){
+    p.phase+=dt*2;
+    if(p.type==='firefly'){
+      p.x+=Math.sin(p.phase+p.y*.01)*8*dt+p.vx*dt*0.3;
+      p.y+=Math.cos(p.phase*.7+p.x*.01)*6*dt+p.vy*dt*0.3;
+    } else if(p.type==='dust'){
+      p.x+=p.vx*dt*.4;
+      p.y+=p.vy*dt*.4;
+      p.vy+=dt*.5;
+      if(p.vy>8)p.vy=0;
+    } else {
+      p.x+=p.vx*dt;
+      p.y+=p.vy*dt+Math.sin(p.phase)*dt*4;
+      p.vy+=dt*2;
+    }
+    if(p.x<0)p.x=MAP_W*TILE;if(p.x>MAP_W*TILE)p.x=0;
+    if(p.y<-20){p.y=MAP_H*TILE;p.vy=(rng()-.5)*4-2;}
+    if(p.y>MAP_H*TILE+20){p.y=-20;p.vy=(rng()-.5)*4-2;}
+  }
+
+  nearest=null;let best=99999;
+  for(const o of interactables){if(!o.active)continue;const d=dist(player.x,player.y,o.x,o.y);if(d<o.radius&&d<best){best=d;nearest=o}}
+  const p=document.getElementById('prompt');
+  if(nearest&&!overlayOpen){p.textContent=nearest.prompt;p.style.display='block'}else p.style.display='none';
+
+  updateQuestProgress();
+  document.getElementById('batteryText').textContent=Math.round(state.battery)+'%';
+  document.getElementById('batteryBar').style.width=state.battery+'%';
+  document.getElementById('questText').textContent=quests[state.questStage]||'Příběh dokončen.';
+  const h=Math.floor(state.time/60),m=Math.floor(state.time%60);document.getElementById('timeText').textContent=`${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
+  document.getElementById('zoneText').textContent=getZone();
+}
+
+function getZone(){
+  const tx=player.x/TILE,ty=player.y/TILE;
+  if(dist(tx,ty,25,28)<13)return 'Vesnice Hvozd';
+  if(dist(tx,ty,65,39)<10)return 'Lesní chata';
+  if(dist(tx,ty,110,25)<12)return 'Reléová stanice';
+  if(dist(tx,ty,130,82)<13)return 'Starý lom';
+  if(dist(tx,ty,47,87)<12)return 'Opuštěná zastávka';
+  if(tx>80&&ty>67&&tx<106&&ty<94)return 'Jezero';
+  return map[Math.floor(ty)]?.[Math.floor(tx)]===T.DIRT?'Lesní cesta':'Les';
+}
+
+function camera(){return {x:clamp(player.x-canvas.width/2,0,MAP_W*TILE-canvas.width),y:clamp(player.y-canvas.height/2,0,MAP_H*TILE-canvas.height)}}
+function render(){
+  const c=camera();ctx.clearRect(0,0,canvas.width,canvas.height);
+  const sx=Math.floor(c.x/TILE),sy=Math.floor(c.y/TILE),ex=Math.ceil((c.x+canvas.width)/TILE),ey=Math.ceil((c.y+canvas.height)/TILE);
+  for(let y=sy;y<=ey;y++)for(let x=sx;x<=ex;x++){
+    if(x<0||y<0||x>=MAP_W||y>=MAP_H)continue;const px=x*TILE-c.x,py=y*TILE-c.y;drawTile(map[y][x],px,py,x,y);
+  }
+  for(const s of structures)drawStructure(s,c);
+  for(const t of trees){const px=t.x*TILE-c.x,py=t.y*TILE-c.y;if(px<-50||py<-70||px>canvas.width+50||py>canvas.height+50)continue;drawTree(px,py,t.s)}
+  for(const o of interactables)if(o.active&&o.draw)drawInteractable(o,c);
+  drawParticles(c);
+  drawPlayer(c);
+  drawDarkness(c);
+  drawMiniMap();
+}
+
+function drawTile(type,x,y,tx,ty){
+  const baseColors=['#3a6b44','#2a4f33','#7a746a','#5e4d3a','#1e4553','#2d3437','#63686b'];
+  ctx.fillStyle=baseColors[type];ctx.fillRect(x,y,TILE+1,TILE+1);
+
+  const hash=((tx*928371+ty*364479)&255)/255;
+  const hash2=((tx*411031+ty*871237)&255)/255;
+
+  if(type===T.GRASS){
+    ctx.fillStyle='rgba(120,170,90,.10)';
+    for(let i=0;i<5;i++){
+      const gx=x+((hash*31+i*7)%TILE),gy=y+((hash2*23+i*11)%TILE);
+      ctx.fillRect(gx,gy,2,4);
+    }
+    ctx.fillStyle='rgba(50,85,45,.15)';
+    ctx.fillRect(x+(hash*18)%20,y+8+((tx+ty)%12),3,2);
+    if((tx*17+ty*31)%9===0){ctx.fillStyle='rgba(235,245,215,.07)';ctx.fillRect(x+20,y+20,5,2)}
+    if(hash>.85){ctx.fillStyle='rgba(255,255,200,.12)';ctx.fillRect(x+(hash*24)%24,y+(hash2*24)%24,2,2)}
+  }
+  if(type===T.FOREST){
+    ctx.fillStyle='rgba(15,40,22,.18)';
+    for(let i=0;i<4;i++){
+      ctx.fillRect(x+((hash*29+i*9)%TILE),y+((hash2*27+i*13)%TILE),3,3);
+    }
+    ctx.fillStyle='rgba(8,25,12,.12)';
+    ctx.fillRect(x+(hash2*20)%22,y+5+((tx*3+ty)%14),4,3);
+  }
+  if(type===T.ROAD||type===T.DIRT){
+    const isRoad=type===T.ROAD;
+    ctx.fillStyle=isRoad?'rgba(255,255,255,.05)':'rgba(255,240,210,.04)';
+    ctx.fillRect(x,y+3,TILE,1);
+    ctx.fillStyle='rgba(0,0,0,.14)';
+    ctx.fillRect(x,y+TILE-5,TILE,5);
+    if((tx+ty)%3===0){ctx.fillStyle='rgba(40,32,26,.22)';ctx.fillRect(x+7,y+12,11,2)}
+    if(hash2>.6){ctx.fillStyle=isRoad?'rgba(120,115,105,.18)':'rgba(90,70,50,.20)';ctx.fillRect(x+(hash*22)%22,y+(hash2*22)%22,4,2)}
+    ctx.fillStyle=isRoad?'rgba(180,175,165,.06)':'rgba(160,130,95,.05)';
+    ctx.fillRect(x+2,y+TILE/2-1,TILE-4,1);
+  }
+  if(type===T.WATER){
+    const t=performance.now()/1000;
+    ctx.fillStyle='rgba(40,90,110,.25)';ctx.fillRect(x,y,TILE,TILE);
+    const wave1=(Math.sin(t*1.2+tx*0.7+ty*0.4)+1)*.5;
+    const wave2=(Math.sin(t*0.9+tx*0.3-ty*0.6)+1)*.5;
+    ctx.fillStyle='rgba(150,210,230,.18)';
+    ctx.fillRect(x+3,y+5+wave1*6,TILE-10,2);
+    ctx.fillStyle='rgba(180,230,245,.12)';
+    ctx.fillRect(x+10,y+18+wave2*5,TILE-14,1);
+    if(hash>.7){ctx.fillStyle='rgba(255,255,255,.08)';ctx.fillRect(x+(hash*20)%20,y+10+wave1*4,3,1)}
+  }
+  if(type===T.STONE){
+    ctx.fillStyle='rgba(80,82,84,.30)';
+    ctx.fillRect(x,y,TILE,TILE);
+    ctx.fillStyle='rgba(255,255,255,.04)';
+    if((tx*11+ty*5)%4===0){ctx.fillRect(x+7,y+9,9,3);ctx.fillRect(x+20,y+20,6,2)}
+    ctx.fillStyle='rgba(0,0,0,.12)';
+    ctx.fillRect(x+2,y+TILE-4,TILE-4,3);
+    if(hash>.5){ctx.fillStyle='rgba(50,52,55,.25)';ctx.fillRect(x+(hash*22)%20,y+(hash2*20)%18,5,4)}
+  }
+  if(type===T.DARK){
+    ctx.fillStyle='rgba(10,8,12,.35)';ctx.fillRect(x,y,TILE,TILE);
+    if(hash>.7){ctx.fillStyle='rgba(30,20,40,.20)';ctx.fillRect(x+(hash*24)%24,y+(hash2*24)%24,3,3)}
+  }
+}
+function drawTree(x,y,s){
+  ctx.save();
+  const shadowBlur=6*s;
+  ctx.fillStyle='rgba(0,0,0,.28)';ctx.beginPath();ctx.ellipse(x+6*s,y+12*s,16*s,7*s,-.12,0,Math.PI*2);ctx.fill();
+
+  ctx.fillStyle='#3d2a1a';ctx.fillRect(x-4*s,y-4*s,8*s,26*s);
+  ctx.fillStyle='#5a3d24';ctx.fillRect(x-3*s,y-3*s,3*s,24*s);
+  ctx.fillStyle='rgba(0,0,0,.18)';ctx.fillRect(x+1*s,y-2*s,3*s,23*s);
+
+  const trunkY=y-8*s;
+  ctx.fillStyle='#0d2415';
+  ctx.beginPath();ctx.arc(x,trunkY-4*s,20*s,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();ctx.arc(x-12*s,trunkY-14*s,13*s,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();ctx.arc(x+13*s,trunkY-12*s,12*s,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();ctx.arc(x-2*s,trunkY-22*s,14*s,0,Math.PI*2);ctx.fill();
+
+  ctx.fillStyle='#1e4a2c';
+  ctx.beginPath();ctx.arc(x-3*s,trunkY-6*s,15*s,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();ctx.arc(x-13*s,trunkY-16*s,10*s,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();ctx.arc(x+11*s,trunkY-14*s,9*s,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();ctx.arc(x-4*s,trunkY-24*s,11*s,0,Math.PI*2);ctx.fill();
+
+  ctx.fillStyle='#2d6b3e';
+  ctx.beginPath();ctx.arc(x-5*s,trunkY-8*s,11*s,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();ctx.arc(x-10*s,trunkY-18*s,7*s,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();ctx.arc(x+9*s,trunkY-16*s,6*s,0,Math.PI*2);ctx.fill();
+
+  ctx.fillStyle='rgba(140,200,120,.10)';
+  ctx.beginPath();ctx.arc(x-8*s,trunkY-18*s,5*s,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();ctx.arc(x+2*s,trunkY-12*s,4*s,0,Math.PI*2);ctx.fill();
+
+  ctx.restore();
+}
+function drawStructure(s,c){
+  const x=s.x*TILE-c.x,y=s.y*TILE-c.y,w=s.w*TILE,h=s.h*TILE;if(x+w<0||y+h<0||x>canvas.width||y>canvas.height)return;
+  ctx.save();
+  ctx.fillStyle='rgba(0,0,0,.30)';ctx.fillRect(x+10,y+12,w,h);
+
+  if(s.type==='tower'){
+    ctx.fillStyle='#3a444d';ctx.fillRect(x+24,y+40,w-48,h-40);
+    ctx.strokeStyle='#9aabb8';ctx.lineWidth=4;
+    ctx.beginPath();ctx.moveTo(x+w/2,y);ctx.lineTo(x+34,y+h);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(x+w/2,y);ctx.lineTo(x+w-34,y+h);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(x+38,y+h*.55);ctx.lineTo(x+w-38,y+h*.55);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(x+42,y+h*.30);ctx.lineTo(x+w-42,y+h*.30);ctx.stroke();
+    ctx.fillStyle='#8a96a0';ctx.fillRect(x+26,y+h-12,w-52,12);
+    ctx.fillStyle='#b63d3d';ctx.fillRect(x+w/2-4,y+4,8,8);
+    ctx.fillStyle='rgba(255,100,100,.3)';ctx.beginPath();ctx.arc(x+w/2,y+8,14,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='#13191e';ctx.fillRect(x+w*.42,y+h-38,32,38);
+    ctx.fillStyle='rgba(80,160,120,.15)';ctx.fillRect(x+w*.42,y+h-38,32,38);
+    ctx.restore();return;
+  }
+  const wall=s.type==='cabin'?'#5e4632':s.type==='station'?'#5a5751':'#63584b';
+  ctx.fillStyle=wall;ctx.fillRect(x,y,w,h);
+  ctx.fillStyle='rgba(255,255,255,.04)';for(let yy=y+14;yy<y+h;yy+=18)ctx.fillRect(x+5,yy,w-10,1);
+  ctx.fillStyle='rgba(0,0,0,.10)';ctx.fillRect(x,y,w,3);ctx.fillRect(x,y,3,h);
+  ctx.fillStyle='rgba(255,255,255,.03)';ctx.fillRect(x+w-3,y,3,h);
+
+  ctx.fillStyle='#3a2e26';ctx.beginPath();ctx.moveTo(x-12,y+11);ctx.lineTo(x+w/2,y-38);ctx.lineTo(x+w+12,y+11);ctx.closePath();ctx.fill();
+  ctx.fillStyle='#4a3a30';ctx.beginPath();ctx.moveTo(x-12,y+11);ctx.lineTo(x+w/2,y-38);ctx.lineTo(x+w/2,y+11);ctx.closePath();ctx.fill();
+  ctx.fillStyle='#2a221c';ctx.fillRect(x-12,y+9,w+24,5);
+
+  ctx.fillStyle='#1a1f24';ctx.fillRect(x+w*.42,y+h-40,32,40);
+  ctx.fillStyle='#2a2018';ctx.fillRect(x+w*.42+2,y+h-38,28,2);
+  ctx.fillStyle='#c9a84a';ctx.beginPath();ctx.arc(x+w*.42+25,y+h-20,2,0,Math.PI*2);ctx.fill();
+
+  const lit=(s.type==='cabin'&&state.flags.powered);
+  const winW=Math.min(34,w*.22),winH=26;
+  const winY=y+h*.30;
+  const wx1=x+w*.18,wx2=x+w-w*.18-winW;
+  ctx.fillStyle=lit?'#ffd894':'#5a7285';
+  ctx.fillRect(wx1,winY,winW,winH);ctx.fillRect(wx2,winY,winW,winH);
+  ctx.strokeStyle=lit?'#8a6a30':'#2a3a45';ctx.lineWidth=2;
+  ctx.strokeRect(wx1,winY,winW,winH);ctx.strokeRect(wx2,winY,winW,winH);
+  ctx.beginPath();ctx.moveTo(wx1+winW/2,winY);ctx.lineTo(wx1+winW/2,winY+winH);ctx.moveTo(wx1,winY+winH/2);ctx.lineTo(wx1+winW,winY+winH/2);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(wx2+winW/2,winY);ctx.lineTo(wx2+winW/2,winY+winH);ctx.moveTo(wx2,winY+winH/2);ctx.lineTo(wx2+winW,winY+winH/2);ctx.stroke();
+
+  if(lit){
+    ctx.fillStyle='rgba(255,211,140,.10)';ctx.fillRect(wx1-12,winY-12,winW+24,winH+24);
+    ctx.fillStyle='rgba(255,211,140,.10)';ctx.fillRect(wx2-12,winY-12,winW+24,winH+24);
+  }
+
+  if(s.type==='station'){
+    ctx.fillStyle='#3a3833';ctx.fillRect(x-6,y+h-10,w+12,10);
+    ctx.fillStyle='#7a7568';for(let i=0;i<4;i++)ctx.fillRect(x-4+i*(w/4),y+h-8,w/4-4,6);
+  }
+  ctx.restore();
+}
+function drawInteractable(o,c){
+  const x=o.x-c.x,y=o.y-c.y;if(x<-60||y<-60||x>canvas.width+60||y>canvas.height+60)return;
+  ctx.save();
+  ctx.fillStyle='rgba(0,0,0,.28)';ctx.beginPath();ctx.ellipse(x,y+15,13,6,0,0,Math.PI*2);ctx.fill();
+  if(o.type==='npc'){
+    ctx.fillStyle='#e0d8c8';ctx.beginPath();ctx.arc(x,y-12,8,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='#c9bfa8';ctx.beginPath();ctx.arc(x,y-12,8,Math.PI,0);ctx.fill();
+    ctx.fillStyle='#2a3540';ctx.beginPath();ctx.arc(x-2,y-13,1.5,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.arc(x+2,y-13,1.5,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='#536b80';ctx.fillRect(x-8,y-4,16,22);
+    ctx.fillStyle='#3d5569';ctx.fillRect(x-8,y-4,16,4);
+    ctx.fillStyle='#263746';ctx.fillRect(x-8,y+15,16,5);
+    ctx.fillStyle='#1a2530';ctx.fillRect(x-7,y+18,5,6);ctx.fillRect(x+2,y+18,5,6);
+  } else if(o.type==='item'){
+    const bob=Math.sin(performance.now()/400+o.x)*2;
+    ctx.fillStyle='rgba(255,255,200,.15)';ctx.beginPath();ctx.arc(x,y+bob,16,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='#dcebb4';ctx.fillRect(x-8,y-8+bob,16,16);
+    ctx.fillStyle='#eef5d0';ctx.fillRect(x-8,y-8+bob,16,4);
+    ctx.strokeStyle='rgba(255,255,255,.7)';ctx.lineWidth=1.5;ctx.strokeRect(x-8,y-8+bob,16,16);
+    ctx.fillStyle='#8a9a5a';ctx.fillRect(x-2,y-2+bob,4,4);
+  } else if(o.type==='machine'||o.type==='console'){
+    ctx.fillStyle='#3d4a55';ctx.fillRect(x-18,y-15,36,30);
+    ctx.fillStyle='#2a343d';ctx.fillRect(x-18,y-15,36,5);
+    ctx.fillStyle='#1a222a';ctx.fillRect(x-13,y-9,17,12);
+    const onColor=o.type==='console'?'#6fe08a':(state.flags.powered?'#6fe08a':'#dd5a50');
+    ctx.fillStyle=onColor;ctx.fillRect(x+8,y-8,6,6);
+    ctx.fillStyle='rgba(0,0,0,.3)';ctx.fillRect(x+8,y-2,6,3);
+    if(o.type==='console'||state.flags.powered){
+      ctx.fillStyle='rgba(110,220,140,.18)';ctx.beginPath();ctx.arc(x+11,y-5,12,0,Math.PI*2);ctx.fill();
+    }
+    ctx.fillStyle='#556570';ctx.fillRect(x-16,y+10,32,5);
+  } else if(o.type==='door'){
+    ctx.fillStyle='#2a221c';ctx.fillRect(x-13,y-22,26,44);
+    ctx.fillStyle='#3a2e24';ctx.fillRect(x-11,y-20,22,3);
+    ctx.fillStyle='#4a3a2c';ctx.fillRect(x-11,y-17,22,40);
+    ctx.fillStyle='#b2a26d';ctx.beginPath();ctx.arc(x+7,y+1,2.5,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='rgba(0,0,0,.15)';ctx.fillRect(x-11,y-17,22,2);
+  } else if(o.type==='cave'){
+    ctx.fillStyle='#0a0e11';ctx.beginPath();ctx.arc(x,y,26,Math.PI,0);ctx.lineTo(x+26,y+18);ctx.lineTo(x-26,y+18);ctx.closePath();ctx.fill();
+    ctx.fillStyle='#1a1f23';ctx.beginPath();ctx.arc(x,y,22,Math.PI,0);ctx.lineTo(x+22,y+14);ctx.lineTo(x-22,y+14);ctx.closePath();ctx.fill();
+    ctx.strokeStyle='rgba(160,170,175,.3)';ctx.lineWidth=2;ctx.stroke();
+    ctx.fillStyle='rgba(80,90,100,.25)';ctx.fillRect(x-22,y+12,44,6);
+  } else if(o.type==='dog'){
+    const wag=Math.sin(performance.now()/200)*3;
+    ctx.fillStyle='#c2a071';ctx.fillRect(x-12,y-5,22,11);
+    ctx.fillRect(x+8,y-13,9,10);
+    ctx.fillStyle='#a08050';ctx.fillRect(x-12,y-5,22,3);
+    ctx.fillStyle='#4c3728';ctx.fillRect(x+13,y-11,2.5,2.5);
+    ctx.fillStyle='#3a2a1e';ctx.fillRect(x+16,y-8,2,2);
+    ctx.fillRect(x-10,y+6,4,6);ctx.fillRect(x+6,y+6,4,6);
+    ctx.fillStyle='#c2a071';ctx.fillRect(x-14,y-2+wag,4,3);
+  } else {
+    ctx.fillStyle='#786b58';ctx.fillRect(x-12,y-10,24,20);
+    ctx.fillStyle='#8a7d68';ctx.fillRect(x-12,y-10,24,4);
+  }
+  if(nearest===o&&!overlayOpen){
+    const pulse=(Math.sin(performance.now()/200)+1)*.5;
+    ctx.strokeStyle=`rgba(225,242,255,${.5+pulse*.4})`;ctx.lineWidth=2.5;ctx.beginPath();ctx.arc(x,y,24,0,Math.PI*2);ctx.stroke();
+  }
+  ctx.restore();
+}
+function drawPlayer(c){
+  const x=player.x-c.x,y=player.y-c.y;
+  ctx.save();
+  const walk=Math.hypot(player.facingX,player.facingY)>0&&!overlayOpen?Math.sin(performance.now()/100)*2:0;
+  ctx.fillStyle='rgba(0,0,0,.3)';ctx.beginPath();ctx.ellipse(x,y+26,12,5.5,0,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#e8eef3';ctx.beginPath();ctx.arc(x,y-9,8.5,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#cdd6de';ctx.beginPath();ctx.arc(x,y-9,8.5,Math.PI,0);ctx.fill();
+  ctx.fillStyle='#1a1f24';ctx.beginPath();ctx.arc(x-2.5,y-10,1.6,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();ctx.arc(x+2.5,y-10,1.6,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#314a63';ctx.fillRect(x-8,y-1,16,22);
+  ctx.fillStyle='#3d5a78';ctx.fillRect(x-8,y-1,16,5);
+  ctx.fillStyle='#1a1f24';ctx.fillRect(x-8,y+17,16,5);
+  ctx.fillStyle='#131719';
+  ctx.fillRect(x-7,y+20+walk,5,10);
+  ctx.fillRect(x+2,y+20-walk,5,10);
+  if(state.hasFlashlight){
+    ctx.fillStyle='#1a1f24';
+    ctx.fillRect(x+player.facingX*5-2,y+6+player.facingY*3-2,4,4);
+    if(state.flashlight){
+      ctx.fillStyle='rgba(255,250,220,.5)';
+      ctx.beginPath();ctx.arc(x+player.facingX*7,y+6+player.facingY*4,3,0,Math.PI*2);ctx.fill();
+    }
+  }
+  ctx.restore();
+}
+function drawParticles(c){
+  const t=performance.now()/1000;
+  for(const p of particles){
+    const px=p.x-c.x,py=p.y-c.y;
+    if(px<-20||py<-20||px>canvas.width+20||py>canvas.height+20)continue;
+    if(p.type==='firefly'){
+      const glow=(Math.sin(p.phase*3)+1)*.5;
+      ctx.fillStyle=`rgba(180,255,160,${.15+glow*.35})`;
+      ctx.beginPath();ctx.arc(px,py,p.size+3+glow*2,0,Math.PI*2);ctx.fill();
+      ctx.fillStyle=`rgba(220,255,200,${.6+glow*.4})`;
+      ctx.beginPath();ctx.arc(px,py,p.size,0,Math.PI*2);ctx.fill();
+    } else if(p.type==='dust'){
+      ctx.fillStyle=`rgba(200,210,220,${.15+Math.sin(p.phase)*.08})`;
+      ctx.beginPath();ctx.arc(px,py,p.size,0,Math.PI*2);ctx.fill();
+    } else {
+      ctx.save();ctx.translate(px,py);ctx.rotate(p.phase*.5);
+      ctx.fillStyle='rgba(120,90,60,.5)';
+      ctx.fillRect(-p.size,-p.size*.4,p.size*2,p.size*.8);
+      ctx.restore();
+    }
+  }
+}
+function nightStrength(){
+  const h=state.time/60;
+  if(h>=21||h<4.5)return .78;
+  if(h>=19&&h<21)return .45+(h-19)*.165;
+  if(h>=4.5&&h<6.5)return .78-(h-4.5)*.28;
+  return 0;
+}
+function punchRadial(x,y,radius,inner=12,power=1){
+  const g=dctx.createRadialGradient(x,y,inner,x,y,radius);
+  g.addColorStop(0,`rgba(0,0,0,${power})`);g.addColorStop(.55,`rgba(0,0,0,${power*.72})`);g.addColorStop(1,'rgba(0,0,0,0)');
+  dctx.fillStyle=g;dctx.beginPath();dctx.arc(x,y,radius,0,Math.PI*2);dctx.fill();
+}
+function drawDarkness(c){
+  const strength=nightStrength();if(strength<=0)return;
+  const px=player.x-c.x,py=player.y-c.y;
+  dctx.clearRect(0,0,darknessCanvas.width,darknessCanvas.height);
+  dctx.globalCompositeOperation='source-over';dctx.fillStyle=`rgba(2,6,11,${strength})`;dctx.fillRect(0,0,darknessCanvas.width,darknessCanvas.height);
+
+  dctx.globalCompositeOperation='destination-out';
+  punchRadial(px,py,state.flashlight?96:68,10,state.flashlight ? 0.95 : 0.58);
+  if(state.flashlight){
+    const angle=Math.atan2(player.facingY,player.facingX),len=360,half=.42;
+    dctx.save();dctx.beginPath();dctx.moveTo(px,py);dctx.arc(px,py,len,angle-half,angle+half);dctx.closePath();dctx.clip();
+    const gx=px+player.facingX*70,gy=py+player.facingY*70;
+    const beam=dctx.createRadialGradient(gx,gy,12,px,py,len);
+    beam.addColorStop(0,'rgba(0,0,0,1)');beam.addColorStop(.55,'rgba(0,0,0,.85)');beam.addColorStop(.82,'rgba(0,0,0,.4)');beam.addColorStop(1,'rgba(0,0,0,0)');
+    dctx.fillStyle=beam;dctx.fillRect(px-len,py-len,len*2,len*2);dctx.restore();
+  }
+  for(const s of structures){
+    if(s.type==='cabin'&&state.flags.powered){
+      const lx=(s.x+s.w/2)*TILE-c.x,ly=(s.y+s.h/2)*TILE-c.y;
+      punchRadial(lx,ly,140,30,0.7);
+    }
+  }
+  dctx.globalCompositeOperation='source-over';
+  ctx.drawImage(darknessCanvas,0,0);
+
+  const vg=ctx.createRadialGradient(canvas.width/2,canvas.height/2,Math.min(canvas.width,canvas.height)*.35,canvas.width/2,canvas.height/2,Math.max(canvas.width,canvas.height)*.75);
+  vg.addColorStop(0,'rgba(0,0,0,0)');
+  vg.addColorStop(1,`rgba(0,0,0,${.35+strength*.2})`);
+  ctx.fillStyle=vg;ctx.fillRect(0,0,canvas.width,canvas.height);
+
+  const flicker=Math.sin(performance.now()/90)*.015+Math.sin(performance.now()/47)*.01;
+  ctx.fillStyle=`rgba(0,0,0,${.02+flicker})`;ctx.fillRect(0,0,canvas.width,canvas.height);
+}
+function drawMiniMap(){
+  mctx.clearRect(0,0,mini.width,mini.height);const sx=mini.width/MAP_W,sy=mini.height/MAP_H;
+  const colors=['#294c2f','#1d3424','#69635a','#514839','#173746','#272c2f','#585b5d'];
+  for(let y=0;y<MAP_H;y+=2)for(let x=0;x<MAP_W;x+=2){mctx.fillStyle=colors[map[y][x]];mctx.fillRect(x*sx,y*sy,Math.ceil(2*sx),Math.ceil(2*sy))}
+  for(const o of interactables){if(!o.active)continue;if(['npc','item','machine','door','console','cave'].includes(o.type)){mctx.fillStyle=o.type==='npc'?'#e6dfc9':'#e1ecff';mctx.fillRect((o.x/TILE)*sx-2,(o.y/TILE)*sy-2,4,4)}}
+  mctx.fillStyle='#fff';mctx.beginPath();mctx.arc((player.x/TILE)*sx,(player.y/TILE)*sy,4,0,Math.PI*2);mctx.fill();
+}
+
+function intro(){
+  state.flags.intro=true;
+  openDialog('21:03 • Okraj Hvozdu','Autobus tě vysadil o dvě zastávky dřív. Silnice dál je zablokovaná spadlými stromy a telefon nemá signál.\n\nPřed tebou vede stará cesta do vesnice Hvozd. Z lesa se ozve krátké zapraskání, skoro jako rádio.',[
+    {text:'Vyrazit do vesnice'}
+  ]);
+}
+
+loadGame();
+if(state.flags.towerOpen){towerDoor.active=false;towerConsole.active=true;}
+updateQuestProgress();
+if(!state.flags.intro)setTimeout(intro,250);
+
+function loop(now){const dt=Math.min((now-last)/1000,.033);last=now;update(dt);render();requestAnimationFrame(loop)}
+requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
